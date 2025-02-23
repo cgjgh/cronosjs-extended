@@ -1,6 +1,6 @@
 {
   "name": "cronosjs-extended",
-  "version": "2.0.6",
+  "version": "2.1.0-beta.1",
   "description": "A cron based task scheduler for node and the browser, with extended syntax and timezone support.",
   "keywords": [
     "cron",

@@ -1,4 +1,4 @@
-import { sortAsc, flatMap } from './utils'
+import { sortAsc, sortDesc, flatMap } from './utils'
 
 const predefinedCronStrings: {
   [key: string]: string
@@ -29,6 +29,7 @@ new Date(8640000000000000) => 00:00:00 13th Sep 275760
 Largest full year valid as JS date = 275759
 */
 const maxValidYear = 275759
+const minValidYear = 1
 
 export enum WarningType {
   IncrementLargerThanRange = 'IncrementLargerThanRange',
@@ -443,4 +444,22 @@ export class YearsField extends Field {
       return years
     }, []).sort(sortAsc)[0] ?? null
   }
+  previousYear(fromYear: number) {
+    return this.items.reduce<number[]>((years, item) => {
+      if (item.any) years.push(fromYear)
+      else if (item.single) {
+        const year = item.range!.from
+        if (year <= fromYear) years.push(year)
+      } else {
+        const end = item.range?.to ?? this.last
+        if (end < fromYear) years.push(end)
+        else {
+          const prevYear = end - Math.ceil((end - fromYear) / item.step) * item.step
+          if (prevYear >= (item.range?.from ?? minValidYear)) years.push(prevYear)
+        }
+      }
+      return years
+    }, []).sort(sortDesc)[0] ?? null
+  }
+  
 }

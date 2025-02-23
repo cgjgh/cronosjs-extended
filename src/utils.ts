@@ -1,5 +1,7 @@
 export const sortAsc = (a: number, b: number) => a - b
 
+export const sortDesc = (a: number, b: number) => b - a
+
 export function flatMap<T, U>(
   arr: T[],
   mapper: (value: T, index: number, array: T[]) => U[]

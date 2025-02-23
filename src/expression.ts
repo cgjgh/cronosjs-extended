@@ -7,6 +7,12 @@ const hourinms = 60 * 60 * 1000
 const maxYears = 2000
 const findFirstFrom = (from: number, list: number[]) => list.findIndex(n => n >= from)
 
+const findLastFrom = (from: number, list: number[]) => {
+  const index = list.slice().reverse().findIndex(n => n <= from);
+  return index === -1 ? -1 : list.length - 1 - index;
+};
+
+
 export class CronosExpression implements DateSequence {
   private timezone?: CronosTimezone
   private skipRepeatedHour = true
@@ -79,6 +85,7 @@ export class CronosExpression implements DateSequence {
     return `${this.cronString} (${timezone})`
   }
 
+  // next dates
   nextDate(afterDate: Date = new Date()): Date | null {
     const fromCronosDate = CronosDate.fromDate(afterDate, this.timezone)
 
@@ -262,5 +269,187 @@ export class CronosExpression implements DateSequence {
     if (nextSecond === undefined) return null
 
     return fromDate.copyWith({second: nextSecond})
+  }
+
+  // previous dates
+  previousDate(beforeDate: Date = new Date()): Date | null {
+    const fromCronosDate = CronosDate.fromDate(beforeDate, this.timezone)
+
+    if (this.timezone?.fixedOffset !== undefined) {
+      return this._previous(fromCronosDate).date
+    }
+
+    const fromTimestamp = beforeDate.getTime(),
+          fromLocalTimestamp = fromCronosDate['toUTCTimestamp'](),
+          prevHourLocalTimestamp = CronosDate.fromDate(new Date(fromTimestamp - hourinms), this.timezone)['toUTCTimestamp'](),
+          nextHourLocalTimestamp = CronosDate.fromDate(new Date(fromTimestamp + hourinms), this.timezone)['toUTCTimestamp'](),
+          prevHourRepeated = prevHourLocalTimestamp - fromLocalTimestamp === 0,
+          thisHourRepeated = fromLocalTimestamp - nextHourLocalTimestamp === 0,
+          thisHourMissing = fromLocalTimestamp - nextHourLocalTimestamp === hourinms * 2
+
+    if (this.skipRepeatedHour && prevHourRepeated) {
+      return this._previous(fromCronosDate.copyWith({ minute: 0, second: -1 }), false).date
+    }
+    if (this.missingHour === 'offset' && thisHourMissing) {
+      const previousDate = this._previous(fromCronosDate.copyWith({ hour: fromCronosDate.hour + 1 })).date
+      if (!previousDate || previousDate.getTime() < fromTimestamp) return previousDate
+    }
+
+    let { date: previousDate, cronosDate: previousCronosDate } = this._previous(fromCronosDate)
+
+    if (this.missingHour !== 'offset' && previousCronosDate && previousDate) {
+      const previousDatePrevHourTimestamp = previousCronosDate.copyWith({ hour: previousCronosDate.hour - 1 }).toDate(this.timezone).getTime()
+      if (previousDatePrevHourTimestamp === previousDate.getTime()) {
+        if (this.missingHour === 'insert') {
+          return previousCronosDate.copyWith({ minute: 59, second: 59 }).toDate(this.timezone)
+        }
+        // this.missingHour === 'skip'
+        return this._previous(previousCronosDate.copyWith({ minute: 0, second: 0 })).date
+      }
+    }
+
+    if (!this.skipRepeatedHour) {
+      if (prevHourRepeated && (!previousDate || (previousDate.getTime() < fromTimestamp - hourinms))) {
+        previousDate = this._previous(fromCronosDate.copyWith({ minute: 59, second: 59 }), false).date
+      }
+      if (previousDate && previousDate > beforeDate) {
+        previousDate = new Date(previousDate.getTime() - hourinms)
+      }
+    }
+
+    return previousDate
+  }
+
+  private _previous(date: CronosDate, after = true) {
+    const previousDate = this._previousYear(
+      after ? date.copyWith({ second: date.second - 1 }) : date
+    )
+
+    return {
+      cronosDate: previousDate,
+      date: previousDate ? previousDate.toDate(this.timezone) : null
+    }
+  }
+
+  previousNDates(beforeDate: Date = new Date(), n: number = 5) {
+    const dates = []
+  
+    let lastDate = beforeDate
+    for (let i = 0; i < n; i++) {
+      const date = this.previousDate(lastDate)
+      if (!date) break;
+      lastDate = date
+      dates.push(date)
+    }
+  
+    return dates
+  }  
+
+  private _previousYear(fromDate: CronosDate): CronosDate | null {
+    let year: number | null = fromDate.year
+
+    let previousDate = null
+
+    while (!previousDate) {
+      year = this.years.previousYear(year)
+      if (year === null || year <= fromDate.year - maxYears) return null
+
+      previousDate = this._previousMonth(
+        (year === fromDate.year) ? fromDate : new CronosDate(year)
+      )
+
+      year--
+    }
+
+    return previousDate
+  }
+
+  private _previousMonth(fromDate: CronosDate): CronosDate | null {
+    let previousMonthIndex = findLastFrom(fromDate.month, this.months)
+
+    let previousDate = null
+
+    while (!previousDate) {
+      const previousMonth = this.months[previousMonthIndex]
+      if (previousMonth === undefined) return null
+
+      previousDate = this._previousDay(
+        (previousMonth === fromDate.month) ? fromDate : new CronosDate(fromDate.year, previousMonth)
+      )
+
+      previousMonthIndex--
+    }
+
+    return previousDate
+  }
+
+  private _previousDay(fromDate: CronosDate): CronosDate | null {
+    const days = this.days.getDays(fromDate.year, fromDate.month)
+
+    let previousDayIndex = findLastFrom(fromDate.day, days)
+
+    let previousDate = null
+
+    while (!previousDate) {
+      const previousDay = days[previousDayIndex]
+      if (previousDay === undefined) return null
+
+      previousDate = this._previousHour(
+        (previousDay === fromDate.day) ? fromDate : new CronosDate(fromDate.year, fromDate.month, previousDay)
+      )
+
+      previousDayIndex--
+    }
+
+    return previousDate
+  }
+
+  private _previousHour(fromDate: CronosDate): CronosDate | null {
+    let previousHourIndex = findLastFrom(fromDate.hour, this.hours)
+
+    let previousDate = null
+
+    while (!previousDate) {
+      const previousHour = this.hours[previousHourIndex]
+      if (previousHour === undefined) return null
+
+      previousDate = this._previousMinute(
+        (previousHour === fromDate.hour) ? fromDate :
+          new CronosDate(fromDate.year, fromDate.month, fromDate.day, previousHour)
+      )
+
+      previousHourIndex--
+    }
+
+    return previousDate
+  }
+
+  private _previousMinute(fromDate: CronosDate): CronosDate | null {
+    let previousMinuteIndex = findLastFrom(fromDate.minute, this.minutes)
+
+    let previousDate = null
+
+    while (!previousDate) {
+      const previousMinute = this.minutes[previousMinuteIndex]
+      if (previousMinute === undefined) return null
+
+      previousDate = this._previousSecond(
+        (previousMinute === fromDate.minute) ? fromDate :
+          new CronosDate(fromDate.year, fromDate.month, fromDate.day, fromDate.hour, previousMinute)
+      )
+
+      previousMinuteIndex--
+    }
+
+    return previousDate
+  }
+
+  private _previousSecond(fromDate: CronosDate): CronosDate | null {
+    const previousSecondIndex = findLastFrom(fromDate.second, this.seconds),
+          previousSecond = this.seconds[previousSecondIndex]
+
+    if (previousSecond === undefined) return null
+
+    return fromDate.copyWith({ second: previousSecond })
   }
 }
